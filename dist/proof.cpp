@@ -145,7 +145,8 @@ int main(int argc, char** argv) {
         SnapshotPayload s2; query_snapshot(port, s2);
         report("C worker-death stale-reject", s2.accepted == s1.accepted);
         // Duplicate rejection: accepted unchanged after resending a known id.
-        send_observation(port, make_client_obs(ObservationId(1), CoordinatorEpoch(2), 33, 444, StateCategory::UsefulExecution));
+        // 33000000 is an id worker C' (33, boot 444) has already published; resending it must be rejected as a duplicate.
+        send_observation(port, make_client_obs(ObservationId(33000000), CoordinatorEpoch(2), 33, 444, StateCategory::UsefulExecution));
         SnapshotPayload s3; query_snapshot(port, s3);
         report("C duplicate reject", s3.accepted == s2.accepted);
         (void)wc2;
