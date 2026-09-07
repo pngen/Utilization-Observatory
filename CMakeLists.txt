@@ -14,7 +14,7 @@ option(UO_BUILD_DISTRIBUTED "Build the distributed TCP proof" ON)
 option(UO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
 if(UO_ENABLE_ASAN AND MSVC)
-    add_compile_options(/fsanitize=address)
+    add_compile_options(/fsanitize=address /Zi)
     add_link_options(/fsanitize=address)
 endif()
 

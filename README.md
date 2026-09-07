@@ -88,7 +88,19 @@ Real evidence is actual CUDA allocation, kernel, transfer, NVML sample, OS proce
 
 ## Build
 
-Requires C++20 and CMake 3.20+. On Windows, MSVC with Ninja is used; strict warnings (`/W4 /WX`) are enforced for the library and all targets. `UO_ENABLE_CUDA` (default OFF) builds the optional CUDA/NVML proof; it is not required for the core.
+Requires C++20 and CMake 3.20+. On Windows, MSVC with Ninja is used; strict warnings (`/W4 /WX /permissive-`) are enforced for the library and all targets. `UO_ENABLE_CUDA` (default OFF) builds the optional CUDA/NVML proof; it is not required for the core.
+
+### AddressSanitizer (genuine x64 MSVC)
+
+Genuine x64 MSVC AddressSanitizer is supported and verified on this host with the Visual Studio 2022 BuildTools toolset 14.44 (`bin\Hostx64\x64\cl.exe`, `lib\x64\clang_rt.asan_dynamic-x86_64.lib`, `bin\Hostx64\x64\clang_rt.asan_dynamic-x86_64.dll`). Configure an ASan build from an initialized x64 `vcvars64` environment with Ninja:
+
+```
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
+cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Release -DUO_ENABLE_ASAN=ON
+cmake --build build-asan
+```
+
+`UO_ENABLE_ASAN` applies `/fsanitize=address` to both compile and link for MSVC and also adds `/Zi`, so the MSVC warning C5072 ("ASAN enabled without debug information emission") is not promoted to an error by the strict `/WX` policy. AddressSanitizer replaces runtime checks, so no `/RTC` substitution is made. The ASan runtime is the dynamic library `clang_rt.asan_dynamic-x86_64.dll`, which must be loadable at run time; put the MSVC x64 toolset `bin\Hostx64\x64` directory on `PATH` before launching any ASan-instrumented binary (this is normal MSVC ASan behavior). The core, property, adversarial, concurrency, and persistence test suites pass under real ASan, and the distributed TCP proof runs with ASan-instrumented coordinator and worker subprocesses.
 
 ## Install
 
@@ -104,6 +116,7 @@ Separate runnable programs cover basic device utilization, headline-vs-useful ga
 - Per-workload useful-work attribution requires Efficiency-Ledger-compatible evidence; without it, useful busy is reported as UNKNOWN rather than zero.
 - Window aggregation scans the retained per-device event list (O(N)); a persistent index is a future concern, correctness first.
 - The CUDA/NVML proof requires a compatible NVIDIA device; on hosts without one it reports `SKIP`.
+- AddressSanitizer is fully supported on x64 MSVC (verified with the Visual Studio 2022 BuildTools 14.44 toolchain via `UO_ENABLE_ASAN`); ASan-instrumented binaries require the MSVC ASan runtime directory (`bin\Hostx64\x64`) on `PATH` at run time. It is not an unsupported or unavailable configuration on x64.
 
 ## License
 
