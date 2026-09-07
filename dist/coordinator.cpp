@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -20,6 +21,7 @@ using namespace uo;
 using namespace uo::dist;
 
 static SteadyClock clk;
+static std::mutex g_save;
 
 static SOCKET bind_listen(int port) {
     SOCKET s = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -109,12 +111,13 @@ int main(int argc, char** argv) {
                                   static_cast<unsigned>(obs.all_sources().size()));
                     pay.insert(pay.end(), text, text + std::strlen(text) + 1);
                     conn.send_frame(MsgKind::Snapshot, pay);
+                    { std::lock_guard<std::mutex> lk(g_save); obs.save(persist); }
                 } else if (f.kind == MsgKind::Close) {
                     break;
                 }
             }
             if (have_source) obs.mark_source_disconnected(conn_source, 0);
-            obs.save(persist);
+            { std::lock_guard<std::mutex> lk(g_save); obs.save(persist); }
         }).detach();
     }
     return 0;
