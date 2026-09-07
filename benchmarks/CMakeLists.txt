@@ -1,0 +1,7 @@
+add_executable(uo_benchmarks main.cpp)
+target_link_libraries(uo_benchmarks PRIVATE utilization_observatory)
+if(MSVC)
+    target_compile_options(uo_benchmarks PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(uo_benchmarks PRIVATE -Wall -Wextra -Werror)
+endif()

@@ -1,0 +1,7 @@
+add_executable(uo main.cpp)
+target_link_libraries(uo PRIVATE utilization_observatory)
+if(MSVC)
+    target_compile_options(uo PRIVATE /W4 /WX /permissive-)
+else()
+    target_compile_options(uo PRIVATE -Wall -Wextra -Werror)
+endif()
