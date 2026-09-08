@@ -1,0 +1,16 @@
+Utilization Observatory
+
+Copyright 2026 Summon Software Labs
+
+Utilization Observatory is an open-source, vendor-neutral runtime for explaining where accelerator capacity is actually going across execution, stalls, memory, transfers, residency, retries, fragmentation, reservations, and idle or stranded states.
+
+This product is licensed under the Apache License, Version 2.0. See the
+LICENSE file in this distribution for the full license text.
+
+Utilization Observatory does not collect or transmit any telemetry. All telemetry is
+written to local files chosen by the operator and never leaves the machine
+running the software.
+
+Utilization Observatory accepts contributions from individuals and organizations on the
+terms of the Apache License 2.0 without requiring a Contributor License
+Agreement (CLA). See CONTRIBUTING.md for contribution guidance.
