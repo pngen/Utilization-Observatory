@@ -6,6 +6,7 @@ add_executable(uo_tests
     test_adversarial.cpp
     test_concurrency.cpp
     test_persistence.cpp
+    test_regression.cpp
 )
 target_link_libraries(uo_tests PRIVATE utilization_observatory)
 target_include_directories(uo_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

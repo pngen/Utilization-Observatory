@@ -107,6 +107,11 @@ int main(int argc, char** argv) {
     int pass = 0, fail = 0;
     auto report = [&](const char* name, bool ok) { std::printf("Scenario %-14s: %s\n", name, ok ? "PASS" : "FAIL"); std::fflush(stdout); (ok ? pass : fail)++; };
 
+    // Every worker the proof starts is terminated before it returns; the
+    // looping workers would otherwise outlive the proof and keep reconnecting.
+    std::vector<HANDLE> workers;
+    auto start_worker = [&](const std::string& args) { HANDLE h = run_process(wk, args); if (h) workers.push_back(h); return h; };
+
     // Start coordinator (incarnation 1).
     HANDLE coord_h = run_process(coord, std::to_string(port) + " \"" + persist + "\"");
     sleep_ms(800);
@@ -116,8 +121,8 @@ int main(int argc, char** argv) {
     report("coordinator up", coord_up);
 
     if (mode == "A" || mode == "all") {
-        HANDLE wa = run_process(wk, std::to_string(port) + " 11 111 active 1");
-        HANDLE wb = run_process(wk, std::to_string(port) + " 22 222 idle 1");
+        HANDLE wa = start_worker(std::to_string(port) + " 11 111 active 1");
+        HANDLE wb = start_worker(std::to_string(port) + " 22 222 idle 1");
         sleep_ms(1200);
         SnapshotPayload sp2;
         if (query_snapshot(port, sp2)) {
@@ -128,7 +133,7 @@ int main(int argc, char** argv) {
     }
 
     if (mode == "C" || mode == "all") {
-        HANDLE wc = run_process(wk, std::to_string(port) + " 33 333 active 1");
+        HANDLE wc = start_worker(std::to_string(port) + " 33 333 active 1");
         sleep_ms(800);
         SnapshotPayload before;
         query_snapshot(port, before);
@@ -136,7 +141,7 @@ int main(int argc, char** argv) {
         TerminateProcess(wc, 0);
         sleep_ms(800);
         // Fresh-boot worker C' reconnects.
-        HANDLE wc2 = run_process(wk, std::to_string(port) + " 33 444 active 1");
+        HANDLE wc2 = start_worker(std::to_string(port) + " 33 444 active 1");
         sleep_ms(800);
         // Stale-boot replay (old boot 333) must be rejected: accepted unchanged.
         SnapshotPayload s1; query_snapshot(port, s1);
@@ -153,8 +158,8 @@ int main(int argc, char** argv) {
     }
 
     if (mode == "D" || mode == "all") {
-        HANDLE wr = run_process(wk, std::to_string(port) + " 44 444 reserved 0");
-        HANDLE ws = run_process(wk, std::to_string(port) + " 55 555 stranded 0");
+        HANDLE wr = start_worker(std::to_string(port) + " 44 444 reserved 0");
+        HANDLE ws = start_worker(std::to_string(port) + " 55 555 stranded 0");
         sleep_ms(1500);
         SnapshotPayload sd; query_snapshot(port, sd);
         std::printf("  D reserved_ns=%llu stranded_ns=%llu\n", (unsigned long long)sd.reserved_ns, (unsigned long long)sd.stranded_ns);
@@ -189,5 +194,6 @@ int main(int argc, char** argv) {
 
     std::printf("=== Distributed result: %d pass, %d fail ===\n", pass, fail);
     TerminateProcess(coord_h, 0);
+    for (HANDLE h : workers) { TerminateProcess(h, 0); WaitForSingleObject(h, INFINITE); CloseHandle(h); }
     return fail == 0 ? 0 : 1;
 }

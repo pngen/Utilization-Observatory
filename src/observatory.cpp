@@ -411,6 +411,14 @@ Status UtilizationObservatory::ingest_locked(const Observation& obs) {
         I.a_stale.fetch_add(1, std::memory_order_relaxed);
         return Status(StatusCode::StaleAuthority, "old coordinator epoch");
     }
+    // A malformed observation is rejected before it can register a source,
+    // advance a generation or claim an observation id.
+    if (obs.end < obs.begin || std::isnan(obs.ratio) || std::isinf(obs.ratio) ||
+        obs.ratio < 0.0 || obs.ratio > 1.0 || std::isnan(obs.percent) ||
+        std::isinf(obs.percent) || obs.percent < 0.0 || obs.percent > 100.0) {
+        I.a_rejected.fetch_add(1, std::memory_order_relaxed);
+        return Status(StatusCode::InvalidInput, "malformed observation");
+    }
 
     auto srcIt = I.sources.find(obs.source);
     if (srcIt == I.sources.end()) {
@@ -457,35 +465,28 @@ Status UtilizationObservatory::ingest_locked(const Observation& obs) {
         }
     }
 
-    if (obs.device.valid()) {
-        auto dg = I.device_gens.find(obs.device);
-        if (dg == I.device_gens.end()) I.device_gens[obs.device] = obs.device_generation;
-        else if (obs.device_generation.value() < dg->second.value()) {
-            I.a_stale.fetch_add(1, std::memory_order_relaxed);
-            return Status(StatusCode::StaleEvidence, "stale device generation");
-        } else if (obs.device_generation.value() > dg->second.value()) {
-            I.device_gens[obs.device] = obs.device_generation;
-        }
+    // Generation fences are compared first and recorded only once the
+    // observation is accepted, so a rejected (stale or duplicate) observation
+    // never advances a generation and locks out current evidence.
+    auto gen_is_stale = [](const auto& gens, const auto& key, const auto& gen) {
+        auto it = gens.find(key);
+        return it != gens.end() && gen.value() < it->second.value();
+    };
+    auto record_gen = [](auto& gens, const auto& key, const auto& gen) {
+        auto it = gens.find(key);
+        if (it == gens.end() || gen.value() > it->second.value()) gens[key] = gen;
+    };
+    if (obs.device.valid() && gen_is_stale(I.device_gens, obs.device, obs.device_generation)) {
+        I.a_stale.fetch_add(1, std::memory_order_relaxed);
+        return Status(StatusCode::StaleEvidence, "stale device generation");
     }
-    if (obs.workload.valid()) {
-        auto wg = I.workload_gens.find(obs.workload);
-        if (wg == I.workload_gens.end()) I.workload_gens[obs.workload] = obs.workload_generation;
-        else if (obs.workload_generation.value() < wg->second.value()) {
-            I.a_stale.fetch_add(1, std::memory_order_relaxed);
-            return Status(StatusCode::StaleEvidence, "stale workload generation");
-        } else if (obs.workload_generation.value() > wg->second.value()) {
-            I.workload_gens[obs.workload] = obs.workload_generation;
-        }
+    if (obs.workload.valid() && gen_is_stale(I.workload_gens, obs.workload, obs.workload_generation)) {
+        I.a_stale.fetch_add(1, std::memory_order_relaxed);
+        return Status(StatusCode::StaleEvidence, "stale workload generation");
     }
-    if (obs.evidence.valid()) {
-        auto eg = I.evidence_gens.find(obs.evidence);
-        if (eg == I.evidence_gens.end()) I.evidence_gens[obs.evidence] = obs.evidence_generation;
-        else if (obs.evidence_generation.value() < eg->second.value()) {
-            I.a_stale.fetch_add(1, std::memory_order_relaxed);
-            return Status(StatusCode::StaleEvidence, "stale evidence generation");
-        } else if (obs.evidence_generation.value() > eg->second.value()) {
-            I.evidence_gens[obs.evidence] = obs.evidence_generation;
-        }
+    if (obs.evidence.valid() && gen_is_stale(I.evidence_gens, obs.evidence, obs.evidence_generation)) {
+        I.a_stale.fetch_add(1, std::memory_order_relaxed);
+        return Status(StatusCode::StaleEvidence, "stale evidence generation");
     }
 
     if (I.seen_obs_id(obs.id)) {
@@ -493,14 +494,10 @@ Status UtilizationObservatory::ingest_locked(const Observation& obs) {
         I.a_duplicates.fetch_add(1, std::memory_order_relaxed);
         return Status(StatusCode::DuplicateObservation, "duplicate observation id");
     }
+    if (obs.device.valid()) record_gen(I.device_gens, obs.device, obs.device_generation);
+    if (obs.workload.valid()) record_gen(I.workload_gens, obs.workload, obs.workload_generation);
+    if (obs.evidence.valid()) record_gen(I.evidence_gens, obs.evidence, obs.evidence_generation);
     I.remember_obs_id(obs.id);
-
-    if (obs.end < obs.begin || std::isnan(obs.ratio) || std::isinf(obs.ratio) ||
-        obs.ratio < 0.0 || obs.ratio > 1.0 || std::isnan(obs.percent) ||
-        std::isinf(obs.percent) || obs.percent < 0.0 || obs.percent > 100.0) {
-        I.a_rejected.fetch_add(1, std::memory_order_relaxed);
-        return Status(StatusCode::InvalidInput, "malformed observation");
-    }
 
     src.info.last_observation = std::max(src.info.last_observation, obs.begin);
     if (obs.wall_time != 0) src.info.last_wall = obs.wall_time;
@@ -1205,7 +1202,10 @@ Status UtilizationObservatory::load(const std::string& path) {
     std::uint32_t version = r.u32();
     if (!r.ok) return Status(StatusCode::PersistenceCorrupt, "truncated header");
     if (version != 1u) return Status(StatusCode::PersistenceCorrupt, "unknown version");
-    (void)r.u64();  // persisted epoch (informational; the running epoch is kept)
+    // Persisted epoch: the running epoch never falls below it, so advancing the
+    // epoch after a restart moves past every epoch issued before (also across
+    // repeated restarts).
+    const std::uint64_t persisted_epoch = r.u64();
     (void)r.u64();  // persisted generation
     std::uint64_t count = r.u64();
     if (!r.ok || count > (body.size() / 2)) return Status(StatusCode::PersistenceCorrupt, "bad count");
@@ -1257,6 +1257,10 @@ Status UtilizationObservatory::load(const std::string& path) {
         kv.second.connected = false;
         kv.second.info.health = SourceHealth::Disconnected;
         kv.second.info.freshness = Freshness::RevalidationRequired;
+    }
+    if (st.ok() && persisted_epoch > I.epoch.value()) {
+        I.epoch = CoordinatorEpoch(persisted_epoch);
+        I.cfg.epoch = I.epoch;
     }
     return st;
 }
